@@ -1,5 +1,6 @@
 import Link from 'next/link'
-import { createClient } from '@/lib/supabase/server'
+import { auth } from '@/lib/auth'
+import { getSanityWriteClient } from '@/lib/sanity/client'
 import { TaskCard } from '@/components/TaskCard'
 import { Task, TaskStatus } from '@/lib/types'
 
@@ -10,19 +11,24 @@ const STATUS_GROUPS: { key: TaskStatus; label: string }[] = [
   { key: 'done', label: 'Готово' },
 ]
 
+const TASK_FIELDS = `_id, title, description, status, priority, deadline, _createdAt, _updatedAt,
+  "createdBy": createdBy->{ _id, email, fullName, role },
+  "assignedTo": assignedTo->{ _id, email, fullName, role }`
+
 export default async function DashboardPage() {
-  const supabase = createClient()
+  const session = await auth()
+  if (!session) return null
 
-  const { data: tasks } = await supabase
-    .from('tasks')
-    .select('*')
-    .order('created_at', { ascending: false })
+  const isClient = session.user.role === 'client'
+  const query = isClient
+    ? `*[_type == "task" && createdBy._ref == $userId] | order(_createdAt desc) { ${TASK_FIELDS} }`
+    : `*[_type == "task"] | order(_createdAt desc) { ${TASK_FIELDS} }`
 
-  const taskList = (tasks as Task[]) ?? []
-  const grouped = STATUS_GROUPS.map(g => ({
-    ...g,
-    items: taskList.filter(t => t.status === g.key),
-  })).filter(g => g.items.length > 0)
+  const tasks = await getSanityWriteClient().fetch<Task[]>(query, { userId: session.user.id })
+
+  const grouped = STATUS_GROUPS
+    .map(g => ({ ...g, items: tasks.filter((t: Task) => t.status === g.key) }))
+    .filter(g => g.items.length > 0)
 
   return (
     <div>
@@ -36,7 +42,7 @@ export default async function DashboardPage() {
         </Link>
       </div>
 
-      {taskList.length === 0 ? (
+      {tasks.length === 0 ? (
         <div className="text-center py-16 text-slate-400">
           <p className="text-lg mb-2">Задач пока нет</p>
           <p className="text-sm">Создайте первую задачу, нажав кнопку выше</p>
@@ -50,7 +56,7 @@ export default async function DashboardPage() {
               </h2>
               <div className="space-y-3">
                 {group.items.map(task => (
-                  <TaskCard key={task.id} task={task} />
+                  <TaskCard key={task._id} task={task} />
                 ))}
               </div>
             </div>

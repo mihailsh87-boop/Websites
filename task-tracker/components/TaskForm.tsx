@@ -7,7 +7,7 @@ import { Task, TaskPriority, TaskStatus, UserRole } from '@/lib/types'
 interface TaskFormProps {
   task?: Task
   userRole: UserRole
-  onSubmit: (data: TaskFormData) => Promise<{ error?: string }>
+  onSubmit: (data: TaskFormData) => Promise<{ error?: string } | void>
 }
 
 export interface TaskFormData {
@@ -36,7 +36,7 @@ export function TaskForm({ task, userRole, onSubmit }: TaskFormProps) {
     setError('')
 
     const result = await onSubmit(formData)
-    if (result.error) {
+    if (result && 'error' in result && result.error) {
       setError(result.error)
       setLoading(false)
     } else {
@@ -44,8 +44,6 @@ export function TaskForm({ task, userRole, onSubmit }: TaskFormProps) {
       router.refresh()
     }
   }
-
-  const isNew = !task
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
@@ -125,7 +123,7 @@ export function TaskForm({ task, userRole, onSubmit }: TaskFormProps) {
           disabled={loading}
           className="flex-1 bg-indigo-600 hover:bg-indigo-700 disabled:bg-indigo-300 text-white font-medium py-2 px-4 rounded-lg text-sm transition-colors"
         >
-          {loading ? 'Сохраняю...' : (isNew ? 'Создать задачу' : 'Сохранить')}
+          {loading ? 'Сохраняю...' : (!task ? 'Создать задачу' : 'Сохранить')}
         </button>
         <button
           type="button"

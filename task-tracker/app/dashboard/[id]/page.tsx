@@ -1,62 +1,69 @@
 import { notFound, redirect } from 'next/navigation'
-import { createClient } from '@/lib/supabase/server'
+import { auth } from '@/lib/auth'
+import { getSanityWriteClient } from '@/lib/sanity/client'
 import { TaskForm, TaskFormData } from '@/components/TaskForm'
 import { StatusBadge } from '@/components/StatusBadge'
 import { Task } from '@/lib/types'
 
-export default async function TaskDetailPage({ params }: { params: { id: string } }) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+const TASK_FIELDS = `_id, title, description, status, priority, deadline, _createdAt, _updatedAt,
+  "createdBy": createdBy->{ _id, email, fullName, role },
+  "assignedTo": assignedTo->{ _id, email, fullName, role }`
 
-  const [{ data: profile }, { data: taskData }] = await Promise.all([
-    supabase.from('profiles').select('role').eq('id', user!.id).single(),
-    supabase.from('tasks').select('*').eq('id', params.id).single(),
-  ])
+export default async function TaskDetailPage({ params }: { params: Promise<{ id: string }> }) {
+  const session = await auth()
+  if (!session) redirect('/login')
 
-  if (!taskData) notFound()
-  const task = taskData as Task
+  const { id } = await params
 
-  async function updateTask(formData: TaskFormData) {
-    'use server'
-    const supabase = createClient()
-    const { data: { user } } = await supabase.auth.getUser()
-    if (!user) return { error: 'Не авторизован' }
+  const task = await getSanityWriteClient().fetch<Task>(
+    `*[_type == "task" && _id == $id][0] { ${TASK_FIELDS} }`,
+    { id }
+  )
 
-    const { data: profile } = await supabase
-      .from('profiles').select('role').eq('id', user.id).single()
+  if (!task) notFound()
 
-    const update: Record<string, unknown> = {
-      title: formData.title.trim(),
-      description: formData.description?.trim() || null,
-      priority: formData.priority,
-      deadline: formData.deadline || null,
-      updated_at: new Date().toISOString(),
-    }
-
-    if (profile?.role === 'developer') {
-      update.status = formData.status
-    }
-
-    const { error } = await supabase.from('tasks').update(update).eq('id', params.id)
-    if (error) return { error: error.message }
+  if (session.user.role === 'client' && task.createdBy?._id !== session.user.id) {
     redirect('/dashboard')
   }
 
-  const createdDate = new Date(task.created_at).toLocaleDateString('ru-RU', {
-    day: 'numeric', month: 'long', year: 'numeric'
+  async function updateTask(formData: TaskFormData) {
+    'use server'
+    const session = await auth()
+    if (!session) return { error: 'Не авторизован' }
+
+    const patch: Record<string, unknown> = {
+      title: formData.title.trim(),
+      description: formData.description?.trim() || undefined,
+      priority: formData.priority,
+      deadline: formData.deadline || undefined,
+    }
+
+    if (session.user.role === 'developer') {
+      patch.status = formData.status
+    }
+
+    await getSanityWriteClient().patch(id).set(patch).commit()
+    redirect('/dashboard')
+  }
+
+  const createdDate = new Date(task._createdAt).toLocaleDateString('ru-RU', {
+    day: 'numeric', month: 'long', year: 'numeric',
   })
 
   return (
     <div className="max-w-lg mx-auto">
-      <div className="flex items-center gap-3 mb-6">
+      <div className="flex items-center gap-3 mb-2">
         <h1 className="text-xl font-semibold text-slate-900 flex-1">{task.title}</h1>
         <StatusBadge status={task.status} />
       </div>
-
       <p className="text-xs text-slate-400 mb-6">Создано: {createdDate}</p>
 
       <div className="bg-white rounded-2xl border border-slate-200 p-6">
-        <TaskForm task={task} userRole={profile?.role ?? 'client'} onSubmit={updateTask} />
+        <TaskForm
+          task={task}
+          userRole={session.user.role as 'client' | 'developer'}
+          onSubmit={updateTask}
+        />
       </div>
     </div>
   )

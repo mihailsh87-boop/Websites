@@ -16,7 +16,7 @@ const PRIORITY_COLORS: Record<TaskPriority, string> = {
 
 export function TaskCard({ task }: { task: Task }) {
   return (
-    <Link href={`/dashboard/${task.id}`}>
+    <Link href={`/dashboard/${task._id}`}>
       <div className="bg-white border border-slate-200 rounded-lg p-4 hover:shadow-md hover:border-slate-300 transition-all cursor-pointer">
         <div className="flex items-start justify-between gap-3 mb-2">
           <h3 className="font-medium text-slate-900 leading-snug">{task.title}</h3>
@@ -35,7 +35,7 @@ export function TaskCard({ task }: { task: Task }) {
             <span>До: {new Date(task.deadline).toLocaleDateString('ru-RU')}</span>
           )}
           <span>
-            {new Date(task.created_at).toLocaleDateString('ru-RU')}
+            {new Date(task._createdAt).toLocaleDateString('ru-RU')}
           </span>
         </div>
       </div>

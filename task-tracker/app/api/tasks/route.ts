@@ -1,24 +1,27 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { auth } from '@/lib/auth'
+import { getSanityWriteClient } from '@/lib/sanity/client'
+
+const TASK_FIELDS = `_id, title, description, status, priority, deadline, _createdAt, _updatedAt,
+  "createdBy": createdBy->{ _id, email, fullName, role },
+  "assignedTo": assignedTo->{ _id, email, fullName, role }`
 
 export async function GET() {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const session = await auth()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { data, error } = await supabase
-    .from('tasks')
-    .select('*, creator:profiles!created_by(id, full_name, email, role), assignee:profiles!assigned_to(id, full_name, email, role)')
-    .order('created_at', { ascending: false })
+  const isClient = session.user.role === 'client'
+  const query = isClient
+    ? `*[_type == "task" && createdBy._ref == $userId] | order(_createdAt desc) { ${TASK_FIELDS} }`
+    : `*[_type == "task"] | order(_createdAt desc) { ${TASK_FIELDS} }`
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const data = await getSanityWriteClient().fetch(query, { userId: session.user.id })
   return NextResponse.json(data)
 }
 
 export async function POST(request: Request) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const session = await auth()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await request.json()
   const { title, description, priority, deadline } = body
@@ -27,19 +30,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: 'Название обязательно' }, { status: 400 })
   }
 
-  const { data, error } = await supabase
-    .from('tasks')
-    .insert({
-      title: title.trim(),
-      description: description?.trim() || null,
-      priority: priority || 'medium',
-      status: 'new',
-      deadline: deadline || null,
-      created_by: user.id,
-    })
-    .select()
-    .single()
+  const doc = await getSanityWriteClient().create({
+    _type: 'task',
+    title: title.trim(),
+    description: description?.trim() || undefined,
+    priority: priority || 'medium',
+    status: 'new',
+    deadline: deadline || undefined,
+    createdBy: { _type: 'reference', _ref: session.user.id },
+  })
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data, { status: 201 })
+  return NextResponse.json(doc, { status: 201 })
 }

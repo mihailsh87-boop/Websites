@@ -1,77 +1,60 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { auth } from '@/lib/auth'
+import { getSanityWriteClient } from '@/lib/sanity/client'
 
-export async function GET(_: Request, { params }: { params: { id: string } }) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+const TASK_FIELDS = `_id, title, description, status, priority, deadline, _createdAt, _updatedAt,
+  "createdBy": createdBy->{ _id, email, fullName, role },
+  "assignedTo": assignedTo->{ _id, email, fullName, role }`
 
-  const { data, error } = await supabase
-    .from('tasks')
-    .select('*, creator:profiles!created_by(id, full_name, email, role), assignee:profiles!assigned_to(id, full_name, email, role)')
-    .eq('id', params.id)
-    .single()
+type Params = { params: Promise<{ id: string }> }
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 404 })
-  return NextResponse.json(data)
-}
+export async function GET(_: Request, { params }: Params) {
+  const session = await auth()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-export async function PATCH(request: Request, { params }: { params: { id: string } }) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single()
-
-  const body = await request.json()
-  const allowedFields: Record<string, unknown> = {
-    title: body.title,
-    description: body.description,
-    priority: body.priority,
-    deadline: body.deadline,
-    updated_at: new Date().toISOString(),
-  }
-
-  if (profile?.role === 'developer') {
-    allowedFields.status = body.status
-    allowedFields.assigned_to = body.assigned_to
-  }
-
-  const cleanUpdate = Object.fromEntries(
-    Object.entries(allowedFields).filter(([, v]) => v !== undefined)
+  const { id } = await params
+  const task = await getSanityWriteClient().fetch(
+    `*[_type == "task" && _id == $id][0] { ${TASK_FIELDS} }`,
+    { id }
   )
 
-  const { data, error } = await supabase
-    .from('tasks')
-    .update(cleanUpdate)
-    .eq('id', params.id)
-    .select()
-    .single()
+  if (!task) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  return NextResponse.json(data)
-}
-
-export async function DELETE(_: Request, { params }: { params: { id: string } }) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('role')
-    .eq('id', user.id)
-    .single()
-
-  if (profile?.role !== 'developer') {
+  if (session.user.role === 'client' && task.createdBy?._id !== session.user.id) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const { error } = await supabase.from('tasks').delete().eq('id', params.id)
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  return NextResponse.json(task)
+}
+
+export async function PATCH(request: Request, { params }: Params) {
+  const session = await auth()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { id } = await params
+  const body = await request.json()
+  const isDeveloper = session.user.role === 'developer'
+
+  const patch: Record<string, unknown> = {}
+  if (body.title !== undefined) patch.title = body.title.trim()
+  if (body.description !== undefined) patch.description = body.description?.trim() || undefined
+  if (body.priority !== undefined) patch.priority = body.priority
+  if (body.deadline !== undefined) patch.deadline = body.deadline || undefined
+  if (isDeveloper && body.status !== undefined) patch.status = body.status
+
+  const updated = await getSanityWriteClient().patch(id).set(patch).commit()
+  return NextResponse.json(updated)
+}
+
+export async function DELETE(_: Request, { params }: Params) {
+  const session = await auth()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  if (session.user.role !== 'developer') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  const { id } = await params
+  await getSanityWriteClient().delete(id)
   return NextResponse.json({ success: true })
 }

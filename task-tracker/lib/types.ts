@@ -1,27 +1,24 @@
 export type UserRole = 'client' | 'developer'
 
-export interface Profile {
-  id: string
+export interface SanityUser {
+  _id: string
   email: string
   role: UserRole
-  full_name: string | null
-  created_at: string
+  fullName: string | null
 }
 
 export type TaskStatus = 'new' | 'in_progress' | 'review' | 'done'
 export type TaskPriority = 'low' | 'medium' | 'high'
 
 export interface Task {
-  id: string
+  _id: string
   title: string
   description: string | null
   priority: TaskPriority
   status: TaskStatus
   deadline: string | null
-  created_by: string | null
-  assigned_to: string | null
-  created_at: string
-  updated_at: string
-  creator?: Profile | null
-  assignee?: Profile | null
+  createdBy: SanityUser | null
+  assignedTo: SanityUser | null
+  _createdAt: string
+  _updatedAt: string
 }
